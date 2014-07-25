@@ -8,7 +8,7 @@
 
 namespace Michelino
 {
-    class RemoteControl : public RemoteControlDriver
+    class RemoteControl : RemoteControlDriver
     {
     public:
         /**
@@ -18,27 +18,27 @@ namespace Michelino
 
         virtual bool getRemoteCommand(command_t& cmd)
         {
-            cmd.stop();
             cmd.key = command_t::keyNone;
-            
             if (BTSerial.available() <= 0)
+            {
                 return false; // no commands available
+            }
             char ch = BTSerial.read();
             BTSerial.print("Received char:");
             BTSerial.println(ch);
             switch (ch) {
                 case '8': // up
                     BTSerial.println("Moving forward");
-                    cmd.goForward();
+                    cmd.key = command_t::forward;
                     break;
                 case '2': // down
-                    cmd.goBack();
+                    cmd.key = command_t::backward;
                     break;
-                case '4': // left
-                    cmd.turnLeft();
+                case '4': // right
+                    cmd.key = command_t::turnRight;
                     break;
-                case '6': // right
-                    cmd.turnRight();
+                case '6': // left
+                    cmd.key = command_t::turnLeft;
                     break;
                 case 'A': // function key #1
                 case 'C':

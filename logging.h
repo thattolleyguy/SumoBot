@@ -11,6 +11,7 @@ void log(char* format, ...)
     vsnprintf(line, sizeof(line), format, args);
     va_end(args);
     Serial.print(line);
+//    BTSerial.println(line);
 }
 
 #else

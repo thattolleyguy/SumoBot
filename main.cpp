@@ -45,11 +45,10 @@
 //#define ENABLE_ROCKETBOT_REMOTE_CONTROL_DRIVER
 
 // constants
-#define TOO_CLOSE 10                    /**< distance to obstacle in centimeters */
-#define MAX_DISTANCE (TOO_CLOSE * 50)   /**< maximum distance to track with sensor */
+#define DOHYO_DISTANCE 90                    /**< distance to obstacle in centimeters */
 #define RANDOM_ANALOG_PIN 5             /**< unused analog pin to use as random seed */
-#define BT_RX_PIN 16                    /**< RX pin for Bluetooth communcation */
-#define BT_TX_PIN 17                    /**< TX pin for Bluetooth communcation */
+#define BT_RX_PIN 15                    /**< RX pin for Bluetooth communcation */
+#define BT_TX_PIN 16                    /**< TX pin for Bluetooth communcation */
 
 #include <SoftwareSerial.h>
 SoftwareSerial BTSerial(BT_RX_PIN, BT_TX_PIN);
@@ -67,10 +66,9 @@ SoftwareSerial BTSerial(BT_RX_PIN, BT_TX_PIN);
 #include <Arduino.h>
 #include "utility/Adafruit_PWMServoDriver.h"
 #include "adafruit_motor_driver_v2.h"
-Adafruit_MotorShield AFMS = Adafruit_MotorShield();
 
-#define LEFT_MOTOR_INIT 3
-#define RIGHT_MOTOR_INIT 4
+
+#define MOTOR_INIT 1,4
 #endif
 
 #ifdef ENABLE_ARDUINO_MOTOR_DRIVER
@@ -82,7 +80,7 @@ Adafruit_MotorShield AFMS = Adafruit_MotorShield();
 #ifdef ENABLE_NEWPING_DISTANCE_SENSOR_DRIVER
 #include <NewPing.h>
 #include "newping_distance_sensor.h"
-#define DISTANCE_SENSOR_INIT 15,15
+#define DISTANCE_SENSOR_INIT 14,14
 #endif
 
 #ifdef ENABLE_PARALLAX_PING_DISTANCE_SENSOR_DRIVER
@@ -113,22 +111,21 @@ namespace Michelino {
          * @brief Class constructor.
          */
         Robot()
-        : leftMotor(LEFT_MOTOR_INIT), rightMotor(RIGHT_MOTOR_INIT),
+        :
+        motor(MOTOR_INIT),
         distanceSensor(DISTANCE_SENSOR_INIT),
-        distanceAverage(TOO_CLOSE * 10),
-        remoteControl(REMOTE_CONTROL_INIT) {
+        distanceAverage(DOHYO_DISTANCE),
+        remoteControl(REMOTE_CONTROL_INIT),
+        distanceToOpponent(-1) {
         }
 
         /*
          * @brief Initialize the robot state.
          */
-        void initialize(Adafruit_MotorShield AFMS) {
-            //            randomSeed(analogRead(RANDOM_ANALOG_PIN));
+        void initialize() {
+            //                        randomSeed(analogRead(RANDOM_ANALOG_PIN));
+            motor.initialize();
             remote();
-            //            move();
-            leftMotor.initialize(AFMS);
-            rightMotor.initialize(AFMS);
-            //            pinMode(LED_PIN, OUTPUT);
         }
 
         /*
@@ -141,11 +138,9 @@ namespace Michelino {
             int distance = distanceAverage.add(rawDistance);
             RemoteControlDriver::command_t remoteCmd;
             bool haveRemoteCmd = remoteControl.getRemoteCommand(remoteCmd);
-            log("state: %d, currentTime: %lu, distance: %u remote: (%d,l:%d,r:%d,k:%d)\n",
+            log("state: %d, currentTime: %lu, distance: %u remote: (%d,k:%d)\n",
                     state, currentTime, distance,
-                    haveRemoteCmd, remoteCmd.left, remoteCmd.right, remoteCmd.key);
-            BTSerial.print("Distance:");
-            BTSerial.println(rawDistance);
+                    haveRemoteCmd, remoteCmd.key);
 
             if (remoteControlled()) {
                 if (haveRemoteCmd) {
@@ -155,25 +150,36 @@ namespace Michelino {
                             move();
                             break;
                         case RemoteControlDriver::command_t::keyNone:
-                            // this is a directional command
-                            leftMotor.setSpeed(remoteCmd.left);
-                            rightMotor.setSpeed(remoteCmd.right);
+                            motor.stop();
+                            break;
+                        case RemoteControlDriver::command_t::forward:
+                            motor.forward();
+                            break;
+                        case RemoteControlDriver::command_t::backward:
+                            motor.backward();
+                            break;
+                        case RemoteControlDriver::command_t::turnLeft:
+                            motor.left();
+                            break;
+                        case RemoteControlDriver::command_t::turnRight:
+                            motor.right();
                             break;
                         default:
                             break;
                     }
                 }
             } else {
-                // "roomba" mode
+                // "auto" mode
                 if (haveRemoteCmd && remoteCmd.key == RemoteControlDriver::command_t::keyF1) {
                     // switch back to remote mode
                     remote();
                 } else {
                     if (moving()) {
-                        if (obstacleAhead(distance))
-                            turn(currentTime);
+                        if (missingOpponent(distance)) {
+                            turn();
+                        }
                     } else if (turning()) {
-                        if (doneTurning(currentTime, distance))
+                        if (doneTurning(distance))
                             move();
                     }
                 }
@@ -183,44 +189,39 @@ namespace Michelino {
     protected:
 
         void remote() {
-            leftMotor.setSpeed(0);
-            rightMotor.setSpeed(0);
             state = stateRemote;
             BTSerial.println("Switching to remote mode");
         }
 
         void move() {
-            leftMotor.setSpeed(255);
-            rightMotor.setSpeed(255);
+            motor.forward();
             state = stateMoving;
             BTSerial.println("Switching to sensor mode");
         }
 
         void stop() {
-            leftMotor.setSpeed(0);
-            rightMotor.setSpeed(0);
+            motor.stop();
             state = stateStopped;
         }
 
-        bool obstacleAhead(unsigned int distance) {
-            return (distance <= TOO_CLOSE);
+        bool missingOpponent(unsigned int distance) {
+            return (distanceToOpponent < 0 || distance > (distanceToOpponent + 5));
         }
 
-        bool turn(unsigned long currentTime) {
+        bool turn() {
             if (random(2) == 0) {
-                leftMotor.setSpeed(-255);
-                rightMotor.setSpeed(255);
+                motor.left();
             } else {
-                leftMotor.setSpeed(255);
-                rightMotor.setSpeed(-255);
+                motor.right();
             }
             state = stateTurning;
-            endStateTime = currentTime + random(500, 1000);
         }
 
-        bool doneTurning(unsigned long currentTime, unsigned int distance) {
-            if (currentTime >= endStateTime)
-                return (distance > TOO_CLOSE);
+        bool doneTurning(unsigned int distance) {
+            if (distance < DOHYO_DISTANCE) {
+                distanceToOpponent = distance;
+                return true;
+            }
             return false;
         }
 
@@ -241,17 +242,16 @@ namespace Michelino {
         }
 
     private:
-        Motor leftMotor;
-        Motor rightMotor;
+        Motor motor;
         DistanceSensor distanceSensor;
         MovingAverage<unsigned int, 3> distanceAverage;
         RemoteControl remoteControl;
+        int distanceToOpponent;
 
         enum state_t {
             stateStopped, stateMoving, stateTurning, stateRemote
         };
         state_t state;
-        unsigned long endStateTime;
     };
 };
 
@@ -262,8 +262,7 @@ void setup() {
     BTSerial.begin(9600);
     BTSerial.println("Robot initialized");
 
-    AFMS.begin();
-    robot.initialize(AFMS);
+    robot.initialize();
 
 }
 
